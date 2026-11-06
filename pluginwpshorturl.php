@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Elegant ShortURL & Share
  * Plugin URI: https://github.com/ohmpwa/pluginwpshorturl
- * Description: ระบบสร้าง Short URL อัตโนมัติ (เช่น yoursite.com/s/xyz) พร้อมปุ่มแชร์และ Modal สไตล์ The Standard / Blockdit ที่สวยงาม สะอาด น่าเชื่อถือ
- * Version: 1.1.0
+ * Description: ระบบสร้าง Short URL อัตโนมัติ (เช่น yoursite.com/s/xyz) พร้อมปุ่มแชร์และ Modal สไตล์ The Standard / Blockdit ที่สวยงาม สะอาด น่าเชื่อถือ พร้อมหน้าตั้งค่าแบบ Seed Social
+ * Version: 1.2.0
  * Author: @iOhm
  * Author URI: https://github.com/ohmpwa
  * License: GPL v2 or later
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WP_SHORTURL_VERSION', '1.1.0');
+define('WP_SHORTURL_VERSION', '1.2.0');
 define('WP_SHORTURL_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('WP_SHORTURL_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -34,30 +34,33 @@ class WP_ShortURL_Plugin {
     }
 
     public function __construct() {
-        // ลงทะเบียน activation hook
+        // Activation & Deactivation
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
 
-        // Rewrite rules สำหรับ Short URL
+        // Rewrite rules
         add_action('init', array($this, 'add_rewrite_rules'));
         add_filter('query_vars', array($this, 'register_query_vars'));
         add_action('template_redirect', array($this, 'handle_shorturl_redirect'));
 
-        // สร้าง shortcode เมื่อบันทึกโพสต์
+        // Post save
         add_action('save_post', array($this, 'auto_generate_shorturl_on_save'), 10, 2);
 
         // Assets
         add_action('wp_enqueue_scripts', array($this, 'enqueue_frontend_assets'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_assets'));
 
-        // Append UI ในหน้าโพสต์
-        add_filter('the_content', array($this, 'append_share_box_to_content'));
+        // Content hook: Top and/or Bottom
+        add_filter('the_content', array($this, 'display_share_buttons_in_content'));
 
-        // Shortcodes: [elegant_shorturl] และ [elegant_share_button]
+        // Open Graph Meta Tags (หากเปิด Share featured image)
+        add_action('wp_head', array($this, 'output_open_graph_tags'));
+
+        // Shortcodes
         add_shortcode('elegant_shorturl', array($this, 'render_shortcode'));
         add_shortcode('elegant_share_button', array($this, 'render_button_shortcode'));
 
-        // Admin Settings
+        // Admin Menu & Settings
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'register_settings'));
         add_action('add_meta_boxes', array($this, 'add_post_meta_box'));
@@ -71,14 +74,22 @@ class WP_ShortURL_Plugin {
         flush_rewrite_rules();
 
         $defaults = array(
-            'prefix' => 's',
-            'code_length' => 6,
-            'auto_display' => array('post', 'page'),
-            'display_mode' => 'modal', // 'modal' (แบบป๊อปอัปตามรูป) หรือ 'box' (กล่องแบบเดิม)
-            'modal_theme' => 'dark',   // 'dark' (สีดำเข้มตามรูป) หรือ 'light' (สีขาว)
-            'button_text' => 'แชร์',
-            'box_title' => 'แชร์',
-            'show_platforms' => array('line', 'facebook', 'copy', 'x'),
+            'post_types' => array('post' => 1, 'page' => 1),
+            'positions'  => array('bottom' => 1),
+            'facebook'   => 1,
+            'facebook_label' => 'facebook',
+            'x'          => 1,
+            'x_label'    => 'twitter',
+            'line'       => 1,
+            'line_label' => 'line',
+            'copy_url'   => 1,
+            'copy_label' => 'คัดลอก URL',
+            'fb_app_id'  => '',
+            'fb_app_secret' => '',
+            'share_featured_image' => 0,
+            'prefix'     => 's',
+            'code_length'=> 6,
+            'modal_title'=> 'แชร์',
         );
 
         if (!get_option('wpshorturl_settings')) {
@@ -92,14 +103,22 @@ class WP_ShortURL_Plugin {
 
     public function get_options() {
         $defaults = array(
-            'prefix' => 's',
-            'code_length' => 6,
-            'auto_display' => array('post'),
-            'display_mode' => 'modal',
-            'modal_theme' => 'dark',
-            'button_text' => 'แชร์',
-            'box_title' => 'แชร์',
-            'show_platforms' => array('line', 'facebook', 'copy', 'x'),
+            'post_types' => array('post' => 1, 'page' => 1),
+            'positions'  => array('bottom' => 1),
+            'facebook'   => 1,
+            'facebook_label' => 'facebook',
+            'x'          => 1,
+            'x_label'    => 'twitter',
+            'line'       => 1,
+            'line_label' => 'line',
+            'copy_url'   => 1,
+            'copy_label' => 'คัดลอก URL',
+            'fb_app_id'  => '',
+            'fb_app_secret' => '',
+            'share_featured_image' => 0,
+            'prefix'     => 's',
+            'code_length'=> 6,
+            'modal_title'=> 'แชร์',
         );
         $options = get_option('wpshorturl_settings', $defaults);
         return wp_parse_args($options, $defaults);
@@ -250,21 +269,69 @@ class WP_ShortURL_Plugin {
         );
     }
 
-    public function append_share_box_to_content($content) {
+    /**
+     * แทรกปุ่มแชร์ที่ Top หรือ Bottom ตามตำแหน่งที่ผู้ใช้ตั้งค่าไว้
+     */
+    public function display_share_buttons_in_content($content) {
         if (!is_singular() || !is_main_query()) {
             return $content;
         }
 
         $options = $this->get_options();
-        $allowed_types = is_array($options['auto_display']) ? $options['auto_display'] : array();
         $post_type = get_post_type();
 
-        if (in_array($post_type, $allowed_types)) {
-            $box_html = $this->render_share_component(get_the_ID());
-            return $content . $box_html;
+        // ตรวจสอบ Post Type to show
+        $post_types = !empty($options['post_types']) && is_array($options['post_types']) ? $options['post_types'] : array();
+        if (empty($post_types[$post_type])) {
+            return $content;
+        }
+
+        $positions = !empty($options['positions']) && is_array($options['positions']) ? $options['positions'] : array();
+        $show_top = !empty($positions['top']);
+        $show_bottom = !empty($positions['bottom']);
+
+        $share_html = $this->render_share_component(get_the_ID());
+
+        if ($show_top && $show_bottom) {
+            return $share_html . $content . $share_html;
+        } elseif ($show_top) {
+            return $share_html . $content;
+        } elseif ($show_bottom) {
+            return $content . $share_html;
         }
 
         return $content;
+    }
+
+    /**
+     * สร้าง Open Graph Meta Tags เมื่อเลือก "Share featured image?"
+     */
+    public function output_open_graph_tags() {
+        if (!is_singular()) {
+            return;
+        }
+
+        $options = $this->get_options();
+        if (empty($options['share_featured_image'])) {
+            return;
+        }
+
+        $post_id = get_the_ID();
+        $title = get_the_title($post_id);
+        $short_url = $this->get_short_url($post_id);
+        $image_url = get_the_post_thumbnail_url($post_id, 'large');
+
+        echo "\n<!-- Seed Social & Elegant ShortURL Open Graph -->\n";
+        echo '<meta property="og:title" content="' . esc_attr($title) . '" />' . "\n";
+        echo '<meta property="og:url" content="' . esc_url($short_url) . '" />' . "\n";
+        echo '<meta property="og:type" content="article" />' . "\n";
+        if (!empty($options['fb_app_id'])) {
+            echo '<meta property="fb:app_id" content="' . esc_attr($options['fb_app_id']) . '" />' . "\n";
+        }
+        if ($image_url) {
+            echo '<meta property="og:image" content="' . esc_url($image_url) . '" />' . "\n";
+        }
+        echo "<!-- End Open Graph -->\n\n";
     }
 
     public function render_shortcode($atts) {
@@ -281,19 +348,18 @@ class WP_ShortURL_Plugin {
     public function render_button_shortcode($atts) {
         $atts = shortcode_atts(array(
             'id' => get_the_ID(),
-            'text' => '',
         ), $atts, 'elegant_share_button');
 
         $post_id = intval($atts['id']);
         if (!$post_id) return '';
 
-        return $this->render_share_component($post_id, false, $atts['text']);
+        return $this->render_share_component($post_id);
     }
 
     /**
-     * เรนเดอร์ UI ปุ่มแชร์ และ Modal Popup ตรงตามรูปแบบในภาพเป๊ะๆ
+     * เรนเดอร์ UI ปุ่มแชร์ และ Modal Popup ตามที่ตั้งค่าไว้
      */
-    public function render_share_component($post_id, $show_box = null, $custom_btn_text = '') {
+    public function render_share_component($post_id) {
         $post = get_post($post_id);
         if (!$post) return '';
 
@@ -303,15 +369,16 @@ class WP_ShortURL_Plugin {
         $encoded_url = urlencode($short_url);
         $encoded_title = urlencode($post_title);
 
-        $theme = !empty($options['modal_theme']) ? esc_attr($options['modal_theme']) : 'dark';
-        $btn_label = !empty($custom_btn_text) ? esc_html($custom_btn_text) : esc_html($options['button_text']);
-        $platforms = (array) $options['show_platforms'];
+        $line_label = !empty($options['line_label']) ? esc_html($options['line_label']) : 'line';
+        $fb_label = !empty($options['facebook_label']) ? esc_html($options['facebook_label']) : 'facebook';
+        $x_label = !empty($options['x_label']) ? esc_html($options['x_label']) : 'twitter';
+        $copy_label = !empty($options['copy_label']) ? esc_html($options['copy_label']) : 'คัดลอก URL';
+        $modal_title = !empty($options['modal_title']) ? esc_html($options['modal_title']) : 'แชร์';
 
         ob_start();
         ?>
-        <!-- Bar ปุ่มแชร์ (Trigger Button) -->
         <div class="wpsu-trigger-wrap" id="wpsu-post-<?php echo esc_attr($post_id); ?>">
-            <button type="button" class="wpsu-share-trigger-btn" data-target-modal="#wpsu-modal-<?php echo esc_attr($post_id); ?>" aria-haspopup="dialog" aria-label="<?php echo $btn_label; ?>">
+            <button type="button" class="wpsu-share-trigger-btn" data-target-modal="#wpsu-modal-<?php echo esc_attr($post_id); ?>" aria-haspopup="dialog" aria-label="<?php echo $modal_title; ?>">
                 <svg class="wpsu-share-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="18" cy="5" r="3"></circle>
                     <circle cx="6" cy="12" r="3"></circle>
@@ -319,17 +386,15 @@ class WP_ShortURL_Plugin {
                     <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
                     <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
                 </svg>
-                <span><?php echo $btn_label; ?></span>
+                <span><?php echo $modal_title; ?></span>
             </button>
         </div>
 
-        <!-- The Modal Popup สไตล์ Dark Card ตามตัวอย่าง -->
-        <div class="wpsu-modal-overlay wpsu-theme-<?php echo $theme; ?>" id="wpsu-modal-<?php echo esc_attr($post_id); ?>" role="dialog" aria-modal="true" style="display: none;">
+        <div class="wpsu-modal-overlay wpsu-theme-dark" id="wpsu-modal-<?php echo esc_attr($post_id); ?>" role="dialog" aria-modal="true" style="display: none;">
             <div class="wpsu-modal-box">
-                <!-- Header: หัวข้อ แชร์ + ปุ่มกากบาทปิด (X) -->
                 <div class="wpsu-modal-header">
-                    <span class="wpsu-modal-title"><?php echo esc_html($options['box_title']); ?></span>
-                    <button type="button" class="wpsu-modal-close" aria-label="ปิดหน้ารับแชร์">
+                    <span class="wpsu-modal-title"><?php echo $modal_title; ?></span>
+                    <button type="button" class="wpsu-modal-close" aria-label="ปิด">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                             <line x1="18" y1="6" x2="6" y2="18"></line>
                             <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -337,11 +402,9 @@ class WP_ShortURL_Plugin {
                     </button>
                 </div>
 
-                <!-- Grid รายการปุ่มแชร์และคัดลอก (เรียง 4 ปุ่ม: แชท LINE, Facebook, คัดลอก URL, X) -->
                 <div class="wpsu-modal-grid">
 
-                    <?php if (in_array('line', $platforms)): ?>
-                    <!-- LINE (แชท) -->
+                    <?php if (!empty($options['line'])): ?>
                     <a href="https://social-plugins.line.me/lineit/share?url=<?php echo $encoded_url; ?>" 
                        target="_blank" rel="noopener noreferrer" 
                        class="wpsu-circle-item">
@@ -350,12 +413,11 @@ class WP_ShortURL_Plugin {
                                 <path d="M24 10.304c0-5.369-5.383-9.738-12-9.738-6.616 0-12 4.369-12 9.738 0 4.814 4.269 8.846 10.035 9.608.391.084.922.258 1.057.592.121.3.079.77.039 1.085l-.171 1.026c-.053.304-.242 1.19.988.648 1.23-.541 6.634-3.906 9.05-6.685C22.617 14.887 24 12.744 24 10.304z"/>
                             </svg>
                         </div>
-                        <span class="wpsu-circle-label"><?php _e('แชท', 'elegant-shorturl'); ?></span>
+                        <span class="wpsu-circle-label"><?php echo $line_label; ?></span>
                     </a>
                     <?php endif; ?>
 
-                    <?php if (in_array('facebook', $platforms)): ?>
-                    <!-- Facebook -->
+                    <?php if (!empty($options['facebook'])): ?>
                     <a href="https://www.facebook.com/sharer/sharer.php?u=<?php echo $encoded_url; ?>" 
                        target="_blank" rel="noopener noreferrer" 
                        class="wpsu-circle-item">
@@ -364,12 +426,11 @@ class WP_ShortURL_Plugin {
                                 <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
                             </svg>
                         </div>
-                        <span class="wpsu-circle-label">Facebook</span>
+                        <span class="wpsu-circle-label"><?php echo $fb_label; ?></span>
                     </a>
                     <?php endif; ?>
 
-                    <?php if (in_array('copy', $platforms)): ?>
-                    <!-- คัดลอก URL (Short URL พร้อม Feedback) -->
+                    <?php if (!empty($options['copy_url'])): ?>
                     <button type="button" class="wpsu-circle-item wpsu-btn-copy-circle" data-url="<?php echo esc_url($short_url); ?>">
                         <div class="wpsu-circle-icon wpsu-icon-copy">
                             <svg class="wpsu-icon-link-default" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -380,12 +441,11 @@ class WP_ShortURL_Plugin {
                                 <polyline points="20 6 9 17 4 12"></polyline>
                             </svg>
                         </div>
-                        <span class="wpsu-circle-label wpsu-label-copy-text"><?php _e('คัดลอก URL', 'elegant-shorturl'); ?></span>
+                        <span class="wpsu-circle-label wpsu-label-copy-text"><?php echo $copy_label; ?></span>
                     </button>
                     <?php endif; ?>
 
-                    <?php if (in_array('x', $platforms)): ?>
-                    <!-- X (Twitter) -->
+                    <?php if (!empty($options['x'])): ?>
                     <a href="https://twitter.com/intent/tweet?url=<?php echo $encoded_url; ?>&text=<?php echo $encoded_title; ?>" 
                        target="_blank" rel="noopener noreferrer" 
                        class="wpsu-circle-item">
@@ -394,13 +454,12 @@ class WP_ShortURL_Plugin {
                                 <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
                             </svg>
                         </div>
-                        <span class="wpsu-circle-label">X</span>
+                        <span class="wpsu-circle-label"><?php echo $x_label; ?></span>
                     </a>
                     <?php endif; ?>
 
                 </div>
 
-                <!-- Toast Alert แจ้งเตือนเมื่อคัดลอกสำเร็จ -->
                 <div class="wpsu-toast" style="display: none;">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                         <polyline points="20 6 9 17 4 12"></polyline>
@@ -454,8 +513,8 @@ class WP_ShortURL_Plugin {
 
     public function add_admin_menu() {
         add_options_page(
-            __('ตั้งค่า Elegant ShortURL', 'elegant-shorturl'),
-            __('Short URL & Share', 'elegant-shorturl'),
+            __('Seed Social & ShortURL', 'elegant-shorturl'),
+            __('Seed Social', 'elegant-shorturl'),
             'manage_options',
             'wpshorturl-settings',
             array($this, 'render_settings_page')
@@ -468,17 +527,41 @@ class WP_ShortURL_Plugin {
 
     public function sanitize_settings($input) {
         $output = array();
+        
+        // Post Type to show
+        $output['post_types'] = array();
+        if (!empty($input['post_types']['post'])) $output['post_types']['post'] = 1;
+        if (!empty($input['post_types']['page'])) $output['post_types']['page'] = 1;
+
+        // Position to show
+        $output['positions'] = array();
+        if (!empty($input['positions']['top'])) $output['positions']['top'] = 1;
+        if (!empty($input['positions']['bottom'])) $output['positions']['bottom'] = 1;
+
+        // Social Platforms & custom labels
+        $output['facebook'] = !empty($input['facebook']) ? 1 : 0;
+        $output['facebook_label'] = sanitize_text_field($input['facebook_label']);
+
+        $output['x'] = !empty($input['x']) ? 1 : 0;
+        $output['x_label'] = sanitize_text_field($input['x_label']);
+
+        $output['line'] = !empty($input['line']) ? 1 : 0;
+        $output['line_label'] = sanitize_text_field($input['line_label']);
+
+        $output['copy_url'] = !empty($input['copy_url']) ? 1 : 0;
+        $output['copy_label'] = sanitize_text_field($input['copy_label']);
+
+        // Facebook App Credentials
+        $output['fb_app_id'] = sanitize_text_field($input['fb_app_id']);
+        $output['fb_app_secret'] = sanitize_text_field($input['fb_app_secret']);
+
+        // Share featured image
+        $output['share_featured_image'] = !empty($input['share_featured_image']) ? 1 : 0;
+
+        // Shortlink prefix
         $output['prefix'] = !empty($input['prefix']) ? sanitize_title($input['prefix']) : 's';
-        $output['code_length'] = max(4, min(12, intval($input['code_length'])));
-        $output['box_title'] = !empty($input['box_title']) ? sanitize_text_field($input['box_title']) : 'แชร์';
-        $output['button_text'] = !empty($input['button_text']) ? sanitize_text_field($input['button_text']) : 'แชร์';
-        $output['modal_theme'] = sanitize_text_field($input['modal_theme']);
-        $output['auto_display'] = !empty($input['auto_display']) && is_array($input['auto_display']) 
-            ? array_map('sanitize_text_field', $input['auto_display']) 
-            : array();
-        $output['show_platforms'] = !empty($input['show_platforms']) && is_array($input['show_platforms'])
-            ? array_map('sanitize_text_field', $input['show_platforms'])
-            : array();
+        $output['code_length'] = max(4, min(12, intval($input['code_length'] ?: 6)));
+        $output['modal_title'] = !empty($input['modal_title']) ? sanitize_text_field($input['modal_title']) : 'แชร์';
 
         $this->add_rewrite_rules();
         flush_rewrite_rules();
@@ -486,91 +569,146 @@ class WP_ShortURL_Plugin {
         return $output;
     }
 
+    /**
+     * หน้าจอตั้งค่า (ตรงตามโครงสร้างและ UI ของรูป Seed Social 100%)
+     */
     public function render_settings_page() {
         $options = $this->get_options();
+        $post_types = !empty($options['post_types']) ? $options['post_types'] : array();
+        $positions = !empty($options['positions']) ? $options['positions'] : array();
         ?>
-        <div class="wrap wpsu-admin-wrap">
-            <div class="wpsu-admin-header">
-                <div class="wpsu-admin-header-title">
-                    <span class="dashicons dashicons-share" style="font-size: 30px; width: 30px; height: 30px; line-height: 1;"></span>
-                    <h1 style="display: inline-block; margin: 0 0 0 10px;"><?php _e('Elegant ShortURL & Social Share Settings', 'elegant-shorturl'); ?></h1>
-                </div>
-                <p class="description"><?php _e('ปรับแต่งระบบสร้าง Short URL และหน้าต่างแชร์โซเชียลมีเดียแบบพรีเมียม (ผู้จัดทำ: @iOhm)', 'elegant-shorturl'); ?></p>
-            </div>
+        <div class="wrap wpsu-seed-settings-wrap">
+            <h1 class="wpsu-seed-main-title"><?php _e('Seed Social', 'elegant-shorturl'); ?></h1>
+            <p class="wpsu-seed-sublink">
+                <?php _e('For more information, please visit', 'elegant-shorturl'); ?> 
+                <a href="https://wordpress.org" target="_blank" rel="noopener noreferrer"><?php _e('FAQ on WordPress.org', 'elegant-shorturl'); ?></a>.
+            </p>
 
-            <form method="post" action="options.php" class="wpsu-settings-form">
+            <h2 class="wpsu-seed-section-title"><?php _e('Social Sharing Buttons', 'elegant-shorturl'); ?></h2>
+
+            <form method="post" action="options.php" class="wpsu-seed-form">
                 <?php settings_fields('wpshorturl_settings_group'); ?>
-                <table class="form-table" role="presentation">
+
+                <table class="form-table wpsu-seed-table" role="presentation">
+                    <!-- Post Type to show: -->
                     <tr>
-                        <th scope="row"><label for="wpsu_prefix"><?php _e('URL Prefix (คำนำหน้าลิงก์ย่อ)', 'elegant-shorturl'); ?></label></th>
+                        <th scope="row"><?php _e('Post Type to show:', 'elegant-shorturl'); ?></th>
+                        <td>
+                            <label class="wpsu-seed-checkbox-label">
+                                <input type="checkbox" name="wpshorturl_settings[post_types][post]" value="1" <?php checked(!empty($post_types['post'])); ?>>
+                                <span><?php _e('Posts', 'elegant-shorturl'); ?></span>
+                            </label>
+                            <label class="wpsu-seed-checkbox-label">
+                                <input type="checkbox" name="wpshorturl_settings[post_types][page]" value="1" <?php checked(!empty($post_types['page'])); ?>>
+                                <span><?php _e('Pages', 'elegant-shorturl'); ?></span>
+                            </label>
+                        </td>
+                    </tr>
+
+                    <!-- Position to show: -->
+                    <tr>
+                        <th scope="row"><?php _e('Position to show:', 'elegant-shorturl'); ?></th>
+                        <td>
+                            <label class="wpsu-seed-checkbox-label">
+                                <input type="checkbox" name="wpshorturl_settings[positions][top]" value="1" <?php checked(!empty($positions['top'])); ?>>
+                                <span><?php _e('Top', 'elegant-shorturl'); ?></span>
+                            </label>
+                            <label class="wpsu-seed-checkbox-label">
+                                <input type="checkbox" name="wpshorturl_settings[positions][bottom]" value="1" <?php checked(!empty($positions['bottom'])); ?>>
+                                <span><?php _e('Bottom', 'elegant-shorturl'); ?></span>
+                            </label>
+                        </td>
+                    </tr>
+
+                    <!-- Facebook -->
+                    <tr>
+                        <th scope="row"><?php _e('Facebook', 'elegant-shorturl'); ?></th>
+                        <td>
+                            <div class="wpsu-seed-input-inline">
+                                <input type="checkbox" name="wpshorturl_settings[facebook]" value="1" <?php checked(!empty($options['facebook'])); ?>>
+                                <input type="text" name="wpshorturl_settings[facebook_label]" value="<?php echo esc_attr($options['facebook_label']); ?>" class="regular-text wpsu-seed-text-small" />
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- X (Twitter) -->
+                    <tr>
+                        <th scope="row"><?php _e('X', 'elegant-shorturl'); ?></th>
+                        <td>
+                            <div class="wpsu-seed-input-inline">
+                                <input type="checkbox" name="wpshorturl_settings[x]" value="1" <?php checked(!empty($options['x'])); ?>>
+                                <input type="text" name="wpshorturl_settings[x_label]" value="<?php echo esc_attr($options['x_label']); ?>" class="regular-text wpsu-seed-text-small" />
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- Line -->
+                    <tr>
+                        <th scope="row"><?php _e('Line', 'elegant-shorturl'); ?></th>
+                        <td>
+                            <div class="wpsu-seed-input-inline">
+                                <input type="checkbox" name="wpshorturl_settings[line]" value="1" <?php checked(!empty($options['line'])); ?>>
+                                <input type="text" name="wpshorturl_settings[line_label]" value="<?php echo esc_attr($options['line_label']); ?>" class="regular-text wpsu-seed-text-small" />
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- คัดลอก URL (Short URL) -->
+                    <tr>
+                        <th scope="row"><?php _e('คัดลอก URL (Short URL)', 'elegant-shorturl'); ?></th>
+                        <td>
+                            <div class="wpsu-seed-input-inline">
+                                <input type="checkbox" name="wpshorturl_settings[copy_url]" value="1" <?php checked(!empty($options['copy_url'])); ?>>
+                                <input type="text" name="wpshorturl_settings[copy_label]" value="<?php echo esc_attr($options['copy_label']); ?>" class="regular-text wpsu-seed-text-small" />
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- Facebook App ID -->
+                    <tr>
+                        <th scope="row"><label for="wpsu_fb_app_id"><?php _e('Facebook App ID', 'elegant-shorturl'); ?></label></th>
+                        <td>
+                            <input type="text" id="wpsu_fb_app_id" name="wpshorturl_settings[fb_app_id]" value="<?php echo esc_attr($options['fb_app_id']); ?>" class="large-text wpsu-seed-input-wide" />
+                        </td>
+                    </tr>
+
+                    <!-- Facebook App Secret -->
+                    <tr>
+                        <th scope="row"><label for="wpsu_fb_app_secret"><?php _e('Facebook App Secret', 'elegant-shorturl'); ?></label></th>
+                        <td>
+                            <input type="password" id="wpsu_fb_app_secret" name="wpshorturl_settings[fb_app_secret]" value="<?php echo esc_attr($options['fb_app_secret']); ?>" class="large-text wpsu-seed-input-wide" />
+                        </td>
+                    </tr>
+
+                    <!-- Share featured image? -->
+                    <tr>
+                        <th scope="row"><?php _e('Share featured image?', 'elegant-shorturl'); ?></th>
+                        <td>
+                            <label class="wpsu-seed-checkbox-label">
+                                <input type="checkbox" name="wpshorturl_settings[share_featured_image]" value="1" <?php checked(!empty($options['share_featured_image'])); ?>>
+                                <span><?php _e('Yes', 'elegant-shorturl'); ?></span>
+                            </label>
+                            <p class="description wpsu-seed-desc"><?php _e('This will add Open Graph meta tags. Do not check this if SEO plugin is installed.', 'elegant-shorturl'); ?></p>
+                        </td>
+                    </tr>
+
+                    <!-- Shortlink Prefix Config -->
+                    <tr>
+                        <th scope="row"><label for="wpsu_prefix"><?php _e('Shortlink Prefix', 'elegant-shorturl'); ?></label></th>
                         <td>
                             <code><?php echo esc_url(home_url('/')); ?></code>
-                            <input type="text" id="wpsu_prefix" name="wpshorturl_settings[prefix]" value="<?php echo esc_attr($options['prefix']); ?>" class="regular-text" style="width: 120px;" />
-                            <code>/abc123</code>
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <th scope="row"><label for="wpsu_modal_theme"><?php _e('โทนสีของหน้าต่างแชร์ (Modal Theme)', 'elegant-shorturl'); ?></label></th>
-                        <td>
-                            <select id="wpsu_modal_theme" name="wpshorturl_settings[modal_theme]">
-                                <option value="dark" <?php selected($options['modal_theme'], 'dark'); ?>><?php _e('Dark Theme (ดีไซน์สีดำคลาสสิก เหมือนตัวอย่าง)', 'elegant-shorturl'); ?></option>
-                                <option value="light" <?php selected($options['modal_theme'], 'light'); ?>><?php _e('Light Theme (สีขาวสะอาดตา)', 'elegant-shorturl'); ?></option>
-                            </select>
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <th scope="row"><label for="wpsu_button_text"><?php _e('ข้อความบนปุ่มแชร์ท้ายบทความ', 'elegant-shorturl'); ?></label></th>
-                        <td>
-                            <input type="text" id="wpsu_button_text" name="wpshorturl_settings[button_text]" value="<?php echo esc_attr($options['button_text']); ?>" class="regular-text" />
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <th scope="row"><label for="wpsu_box_title"><?php _e('หัวข้อในหน้าต่างป๊อปอัป', 'elegant-shorturl'); ?></label></th>
-                        <td>
-                            <input type="text" id="wpsu_box_title" name="wpshorturl_settings[box_title]" value="<?php echo esc_attr($options['box_title']); ?>" class="regular-text" />
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <th scope="row"><?php _e('แสดงผลอัตโนมัติที่', 'elegant-shorturl'); ?></th>
-                        <td>
-                            <label style="margin-right: 15px;">
-                                <input type="checkbox" name="wpshorturl_settings[auto_display][]" value="post" <?php checked(in_array('post', (array)$options['auto_display'])); ?>>
-                                <?php _e('เรื่อง (Posts)', 'elegant-shorturl'); ?>
-                            </label>
-                            <label>
-                                <input type="checkbox" name="wpshorturl_settings[auto_display][]" value="page" <?php checked(in_array('page', (array)$options['auto_display'])); ?>>
-                                <?php _e('หน้า (Pages)', 'elegant-shorturl'); ?>
-                            </label>
-                            <p class="description"><?php _e('สามารถใช้ Shortcode <code>[elegant_share_button]</code> หรือ <code>[elegant_shorturl]</code> ได้ทุกที่', 'elegant-shorturl'); ?></p>
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <th scope="row"><?php _e('ช่องทางที่ต้องการเปิดใช้งาน', 'elegant-shorturl'); ?></th>
-                        <td>
-                            <?php 
-                            $available_platforms = array(
-                                'line'     => 'LINE (แชท)',
-                                'facebook' => 'Facebook',
-                                'copy'     => 'คัดลอก URL (Short URL)',
-                                'x'        => 'X (Twitter)',
-                            );
-                            foreach ($available_platforms as $key => $label): 
-                            ?>
-                                <label style="display: inline-block; margin-right: 18px; margin-bottom: 8px;">
-                                    <input type="checkbox" name="wpshorturl_settings[show_platforms][]" value="<?php echo esc_attr($key); ?>" <?php checked(in_array($key, (array)$options['show_platforms'])); ?>>
-                                    <?php echo esc_html($label); ?>
-                                </label>
-                            <?php endforeach; ?>
+                            <input type="text" id="wpsu_prefix" name="wpshorturl_settings[prefix]" value="<?php echo esc_attr($options['prefix']); ?>" class="regular-text" style="width: 100px;" />
+                            <code>/7xKq9</code>
+                            <p class="description wpsu-seed-desc"><?php _e('คำนำหน้า Short URL (ค่าเริ่มต้น: s)', 'elegant-shorturl'); ?></p>
                         </td>
                     </tr>
                 </table>
 
-                <?php submit_button(__('บันทึกการตั้งค่า', 'elegant-shorturl'), 'primary'); ?>
+                <div class="wpsu-seed-submit-wrap">
+                    <button type="submit" name="submit" id="submit" class="button button-primary wpsu-seed-btn-submit">
+                        <?php _e('บันทึกการเปลี่ยนแปลง', 'elegant-shorturl'); ?>
+                    </button>
+                </div>
             </form>
         </div>
         <?php
