@@ -1,96 +1,86 @@
 /**
- * Elegant ShortURL & Share - Frontend JavaScript
- * High Performance, Zero External Dependencies (Vanilla JS)
+ * Elegant ShortURL & Share - Frontend JS
+ * Modal Controller & One-Click Copy functionality
  */
 
 document.addEventListener('DOMContentLoaded', function () {
-    // 1. จัดการปุ่มคลิกคัดลอก (Copy to Clipboard)
-    var copyButtons = document.querySelectorAll('.wpsu-btn-copy');
-
-    copyButtons.forEach(function (button) {
-        button.addEventListener('click', function (e) {
-            e.preventDefault();
-            var urlToCopy = button.getAttribute('data-url');
-            if (!urlToCopy) {
-                var input = button.closest('.wpsu-copy-group').querySelector('.wpsu-input');
-                if (input) {
-                    urlToCopy = input.value;
-                }
-            }
-
-            if (!urlToCopy) return;
-
-            copyToClipboard(urlToCopy, function (success) {
-                if (success) {
-                    var defaultSpan = button.querySelector('.wpsu-btn-copy-default');
-                    var successSpan = button.querySelector('.wpsu-btn-copy-success');
-
-                    button.classList.add('wpsu-copied');
-                    if (defaultSpan) defaultSpan.style.display = 'none';
-                    if (successSpan) successSpan.style.display = 'inline-flex';
-
-                    setTimeout(function () {
-                        button.classList.remove('wpsu-copied');
-                        if (defaultSpan) defaultSpan.style.display = 'inline-flex';
-                        if (successSpan) successSpan.style.display = 'none';
-                    }, 2500);
-                } else {
-                    alert('กรุณาคัดลอกลิงก์ด้วยตนเอง: ' + urlToCopy);
-                }
-            });
-        });
-    });
-
-    // 2. จัดการคลิกที่ช่อง input เพื่อเลือกข้อความทั้งหมดอัตโนมัติ (Select All)
-    var inputs = document.querySelectorAll('.wpsu-input');
-    inputs.forEach(function (input) {
-        input.addEventListener('click', function () {
-            this.select();
-        });
-    });
-
-    // 3. จัดการ Popup QR Code
-    var qrButtons = document.querySelectorAll('.wpsu-share-qr');
-    qrButtons.forEach(function (qrBtn) {
-        qrBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            var card = qrBtn.closest('.wpsu-card');
-            if (!card) return;
-
-            var modal = card.querySelector('.wpsu-qr-modal');
-            var img = modal.querySelector('.wpsu-qr-img');
-            var url = qrBtn.getAttribute('data-qr-url');
-
-            if (modal && img && url) {
-                // สร้าง QR Code จาก Quickchart API / Google Chart API ที่เชื่อถือได้และเร็ว
-                img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(url);
-                modal.style.display = 'flex';
-            }
-        });
-    });
-
-    // ปิด QR Modal เมื่อคลิกปุ่มปิด หรือคลิกด้านนอก
+    // 1. เปิด Modal เมื่อกดปุ่ม Trigger
     document.addEventListener('click', function (e) {
-        if (e.target.matches('.wpsu-qr-close') || e.target.classList.contains('wpsu-qr-modal')) {
-            var openModals = document.querySelectorAll('.wpsu-qr-modal');
-            openModals.forEach(function (m) {
-                m.style.display = 'none';
-            });
+        var trigger = e.target.closest('.wpsu-share-trigger-btn');
+        if (trigger) {
+            e.preventDefault();
+            var targetSelector = trigger.getAttribute('data-target-modal');
+            var modal = document.querySelector(targetSelector);
+            if (modal) {
+                modal.style.display = 'flex';
+                document.body.style.overflow = 'hidden'; // ป้องกัน background scroll
+            }
         }
     });
 
-    // ปิดเมื่อกด Esc
+    // 2. ปิด Modal เมื่อกดปุ่ม X หรือคลิก Backdrop พื้นหลัง
+    document.addEventListener('click', function (e) {
+        if (e.target.closest('.wpsu-modal-close') || e.target.classList.contains('wpsu-modal-overlay')) {
+            var openModals = document.querySelectorAll('.wpsu-modal-overlay');
+            openModals.forEach(function (modal) {
+                modal.style.display = 'none';
+            });
+            document.body.style.overflow = '';
+        }
+    });
+
+    // 3. ปิดด้วยปุ่ม Escape บนคีย์บอร์ด
     document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape') {
-            var openModals = document.querySelectorAll('.wpsu-qr-modal');
-            openModals.forEach(function (m) {
-                m.style.display = 'none';
+            var openModals = document.querySelectorAll('.wpsu-modal-overlay');
+            openModals.forEach(function (modal) {
+                modal.style.display = 'none';
             });
+            document.body.style.overflow = '';
         }
+    });
+
+    // 4. คัดลอก URL เมื่อคลิกที่ปุ่มวงกลม "คัดลอก URL"
+    document.addEventListener('click', function (e) {
+        var copyBtn = e.target.closest('.wpsu-btn-copy-circle');
+        if (!copyBtn) return;
+
+        e.preventDefault();
+        var urlToCopy = copyBtn.getAttribute('data-url');
+        if (!urlToCopy) return;
+
+        copyToClipboard(urlToCopy, function (success) {
+            if (success) {
+                var modal = copyBtn.closest('.wpsu-modal-box');
+                var toast = modal ? modal.querySelector('.wpsu-toast') : null;
+                var iconLink = copyBtn.querySelector('.wpsu-icon-link-default');
+                var iconCheck = copyBtn.querySelector('.wpsu-icon-check-done');
+                var label = copyBtn.querySelector('.wpsu-label-copy-text');
+
+                copyBtn.classList.add('wpsu-copied');
+                if (iconLink) iconLink.style.display = 'none';
+                if (iconCheck) iconCheck.style.display = 'block';
+                if (label) label.textContent = 'คัดลอกแล้ว!';
+
+                if (toast) {
+                    toast.style.display = 'inline-flex';
+                }
+
+                setTimeout(function () {
+                    copyBtn.classList.remove('wpsu-copied');
+                    if (iconLink) iconLink.style.display = 'block';
+                    if (iconCheck) iconCheck.style.display = 'none';
+                    if (label) label.textContent = 'คัดลอก URL';
+                    if (toast) toast.style.display = 'none';
+                }, 2200);
+            } else {
+                window.prompt('คัดลอกลิงก์:', urlToCopy);
+            }
+        });
     });
 
     /**
-     * Helper สำหรับคัดลอกข้อความ รองรับทั้ง modern navigator.clipboard และ fallback
+     * ฟังก์ชันคัดลอกลง Clipboard รองรับทั้ง navigator.clipboard และ execCommand
      */
     function copyToClipboard(text, callback) {
         if (navigator.clipboard && window.isSecureContext) {
