@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/ohmpwa/pluginwpshorturl
  * Description: ระบบสร้าง Short URL อัตโนมัติ (เช่น yoursite.com/s/xyz) พร้อมปุ่มแชร์และคัดลอกลิงก์ที่สวยงาม สะอาด ทันสมัย และน่าเชื่อถือ
  * Version: 1.0.0
- * Author: Ohmpwa
+ * Author: @iOhm
  * Author URI: https://github.com/ohmpwa
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html

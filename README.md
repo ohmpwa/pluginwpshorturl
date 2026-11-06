@@ -62,5 +62,8 @@ pluginwpshorturl/
 
 ---
 
+## Author
+พัฒนาโดย **@iOhm** ([@ohmpwa](https://github.com/ohmpwa))
+
 ## License
 GPL v2 or later
